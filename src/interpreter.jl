@@ -72,16 +72,22 @@ function Compiler.add_remark!(interp::CthulhuInterpreter, sv::InferenceState, ms
 end
 
 function Compiler.finish(state::InferenceState, interp::CthulhuInterpreter)
-    r = @invoke Compiler.finish(state::InferenceState, interp::AbstractInterpreter)
-    interp.unopt[Core.Compiler.any(state.result.overridden_by_const) ? state.result : state.linfo] = InferredSource(
+    res = @invoke Compiler.finish(state::InferenceState, interp::AbstractInterpreter)
+    key = Core.Compiler.any(state.result.overridden_by_const) ? state.result : state.linfo
+    interp.unopt[key] = InferredSource(
         copy(state.src),
         copy(state.stmt_info),
         state.result.result)
-    return r
+    return res
 end
 
 function Compiler.transform_result_for_cache(interp::CthulhuInterpreter, linfo::MethodInstance,
         valid_worlds::WorldRange, @nospecialize(inferred_result))
+@static if isdefined(Compiler, :transform_optresult_for_cache)
+    return isa(inferred_result, OptimizedSource) ? inferred_result :
+           isa(inferred_result, Compiler.ConstAPI) ? inferred_result :
+           nothing
+else # @static if isdefined(Compiler, :transform_optresult_for_cache)
     if isa(inferred_result, OptimizationState)
         opt = inferred_result
         ir = opt.ir
@@ -90,6 +96,7 @@ function Compiler.transform_result_for_cache(interp::CthulhuInterpreter, linfo::
         end
     end
     return inferred_result
+end # @static if isdefined(Compiler, :transform_optresult_for_cache)
 end
 
 # branch on https://github.com/JuliaLang/julia/pull/41328
@@ -119,6 +126,17 @@ function Compiler.inlining_policy(interp::CthulhuInterpreter)
 end
 end # @static if isdefined(Compiler, :is_stmt_inline)
 
+# branch on https://github.com/JuliaLang/julia/pull/43994
+@static if isdefined(Compiler, :transform_optresult_for_cache)
+
+function Compiler.transform_optresult_for_cache(interp::CthulhuInterpreter,
+    opt::OptimizationState, ir::IRCode, @nospecialize(newresult))
+    isa(newresult, Compiler.ConstAPI) && return newresult
+    return OptimizedSource(ir, opt.src, opt.src.inlineable)
+end
+
+else # @static if isdefined(Compiler, :transform_optresult_for_cache)
+
 function Compiler.finish!(interp::CthulhuInterpreter, caller::InferenceResult)
     src = caller.src
     if isa(src, OptimizationState)
@@ -129,3 +147,5 @@ function Compiler.finish!(interp::CthulhuInterpreter, caller::InferenceResult)
         end
     end
 end
+
+end # @static if isdefined(Compiler, :transform_optresult_for_cache)
